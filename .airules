@@ -1,0 +1,98 @@
+# Wargaming Rules Compendium - AI Agent Rules
+
+## Project Overview
+A cross-platform Flutter app for organizing and reading wargaming rulebooks (PDFs). Supports Windows desktop and Android mobile.
+
+## Current Architecture (As of Schema Version 4)
+
+### Database Schema
+- **games**: id, name (unique)
+- **folders**: id, game_id, parent_folder_id (nullable for root-level folders), name
+- **books**: id, game_id, title, file_path, source_type ('pdf'), last_page, folder_id (nullable for root-level books)
+
+Folders use an adjacency-list tree pattern. Books can exist at the game root (folder_id = null) or inside any folder depth.
+
+### Platform-Specific Rendering
+- **Windows**: Uses pdfx's built-in `PdfView` widget. Instant rendering, continuous scroll, no zoom support (pdfx's Windows backend deadlocks with custom zoom implementations).
+- **Android**: Uses a custom lazy `ListView` renderer with explicit `page.render(width:, height:)` calls. Supports pinch-zoom, percentage scaling (50%-300%), and crisp re-rasterization at any zoom level.
+
+The app branches at runtime in `reader_screen.dart` based on `Platform.isWindows` vs `Platform.isAndroid`.
+
+### Key Services
+- `DatabaseService`: Singleton managing SQLite (sqflite). Current version: 4. Migrations stack in `_upgradeDB`.
+- `FileService`: Handles PDF import (copies to app's private storage) and deletion.
+- `reader_screen.dart`: Two-headed renderer with shared navigation (slider, jump dialog, position memory).
+
+## Known Issues & Solutions
+
+### Android Build
+- **Kotlin incremental compilation bug**: Cross-drive paths (C: pub cache, D: project) cause `IllegalArgumentException`. Fixed by adding `kotlin.incremental=false` to `android/gradle.properties`.
+- **NDK version mismatch**: Flutter template expects NDK 28.x, but we installed 30.0.16248370. Fixed by explicitly setting `ndkVersion = "30.0.16248370"` in `android/app/build.gradle.kts`.
+- **sdkmanager crash**: Old cmdline-tools crash under Java 21+. Workaround: install NDK via Android Studio GUI instead of CLI.
+
+### Windows Rendering
+- **PdfViewPinch deadlock**: Freezes with 0% CPU on Windows. Replaced with plain `PdfView`.
+- **PdfView ignores zoom**: Container width changes don't affect page raster size. Attempted MediaQuery override failed. Solution: abandoned zoom on Windows, use custom renderer on Android only.
+- **Custom renderer concurrency**: Multiple simultaneous `page.render()` calls deadlock PDFium. Solution: serialized render queue with `Future.then<void>((_) async {...})`.
+
+## Coding Conventions
+
+### File Structure
+- Models: `lib/models/game_model.dart` (Game, Folder, Book classes)
+- Services: `lib/services/database_service.dart`, `lib/services/file_service.dart`
+- Screens: `lib/screens/home_screen.dart`, `lib/screens/game_detail_screen.dart`, `lib/screens/reader_screen.dart`
+
+### Imports
+- Always pre-empt required imports. Every file must explicitly import what it uses.
+- Flutter APIs are not global: `debugPrint` requires `import 'package:flutter/foundation.dart';`, gesture events require `import 'package:flutter/gestures.dart';`.
+- Use relative imports within `lib/`: `import '../models/game_model.dart';`
+
+### Database Migrations
+- Increment version number in `_initDB`.
+- Add new `CREATE TABLE` or `ALTER TABLE` statements in `_upgradeDB` with `if (oldVersion < N)` guards.
+- Update `_createDB` to include new columns/tables for fresh installs.
+- Existing data migrates automatically; null columns mean "not set yet".
+
+### UI Patterns
+- Use `LayoutBuilder` when you need to know parent constraints (e.g., positioning overlays).
+- Use `Stack` + `Positioned` for overlays (slider, bubbles) on top of scrollable content.
+- Use `NotificationListener<ScrollNotification>` to track scroll position without controlling the scroll view.
+- For recursive tree navigation, push the same screen with different parameters (e.g., `GameDetailScreen` with `folderId`).
+
+## Planned Features (Do Not Build Yet)
+
+### FTS5 Full-Text Search
+- Add SQLite FTS5 virtual table for extracted book content.
+- Implement text extraction service (PDF text layer parsing).
+- Search UI with scoped ranking (global / game / folder / current-book priority).
+- Native snippet() excerpts in results.
+
+### Chapter Navigation
+- Read PDF embedded outlines via pdfx's document API.
+- Jump-to-chapter UI with fallback regex detection for PDFs without outlines.
+
+### Text-Based Sources
+- Add `sourceType = 'text'` for errata pasted from web compendiums (e.g., Kings of War).
+- Render as formatted text instead of PDF pages.
+
+## User Preferences
+
+### Code Delivery
+- Provide **complete file replacements** over surgical diffs when multiple edits accumulate.
+- Pre-empt all required imports and dependencies (`flutter pub add` commands).
+- Include test checklists for verification.
+
+### Debugging
+- When stuck on platform-specific bugs, recommend pivoting to the other platform if it's battle-tested there.
+- Use `debugPrint` for development logging (appears in Debug Console).
+- Check Task Manager CPU usage to distinguish deadlocks (0%) from infinite loops (100%).
+
+## File Locations
+- Windows app data: `C:\Users\<user>\AppData\Roaming\com.example\` (includes `rules_repository.db` and `books/` folder).
+- Android app data: Standard scoped storage paths.
+- Build artifacts: `build/` folder (gitignored).
+
+## Git Workflow
+- Commit frequently with descriptive messages.
+- Push to GitHub when ready to sync or hand off to another AI agent.
+- Use branches for experimental features (e.g., `feature/fts5-search`).
