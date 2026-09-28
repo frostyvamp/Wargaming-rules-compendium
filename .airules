@@ -1,98 +1,89 @@
-# Wargaming Rules Compendium - AI Agent Rules
+# .airules — Binding specification for any agent working on this repo
+# Read this file IN FULL before any task. Re-read after any schema or
+# dependency change. If you are about to execute a shell command: STOP.
+# You have no shell, no Flutter SDK, no Android SDK, no device access.
+# Advise only; the human executes on Windows and pastes results back.
 
-## Project Overview
-A cross-platform Flutter app for organizing and reading wargaming rulebooks (PDFs). Supports Windows desktop and Android mobile.
+## 1. Agent operating rules
+- Inspect the project file structure first, then read this file fully.
+- Never guess package API signatures. If uncertain, ask the human to
+  paste the exact analyzer error or the IDE IntelliSense candidates.
+- Pre-emptively declare every import and pub dependency a change needs.
+- Prefer full-file replacements for heavily edited files; use surgical
+  diffs only with exact find/replace anchors.
+- The analyzer message is the specification. Adapt code to installed
+  versions; never argue with them.
+- Request log tails, not summaries, when diagnosing failures.
 
-## Current Architecture (As of Schema Version 4)
+## 2. Project overview
+Offline-first personal wargaming rules compendium ("Rules Repository").
+Hierarchy: Game -> Folder (arbitrary depth, optional) -> Book (PDF).
+No network calls at runtime, ever. Online content enters only via
+user-imported files or (planned) pasted text.
 
-### Database Schema
-- **games**: id, name (unique)
-- **folders**: id, game_id, parent_folder_id (nullable for root-level folders), name
-- **books**: id, game_id, title, file_path, source_type ('pdf'), last_page, folder_id (nullable for root-level books)
+## 3. Stack and pins
+- Flutter on a recent SDK (post-3.41: cacheExtent deprecated in favor
+  of scrollCacheExtent).
+- sqflite + path + path_provider for storage and database.
+- file_picker: ^8.3.1 PINNED. Newer majors removed FilePicker.platform.
+- pdfx: 2.11.0. Use pagesCount (plural). render(width:, height:,
+  format:) takes doubles and returns Future<PdfPageImage?>; image
+  width/height are nullable.
+- dart:io Platform for platform branching.
 
-Folders use an adjacency-list tree pattern. Books can exist at the game root (folder_id = null) or inside any folder depth.
+## 4. File tree (lib/)
+- main.dart                      Entry, desktop sqflite FFI init,
+                                 MaterialApp (dark theme, no banner).
+- models/game_model.dart         Game, Folder, Book models.
+- services/database_service.dart Singleton, schema + migrations.
+- services/file_service.dart     Copies imports into private books/.
+- screens/home_screen.dart       Game list.
+- screens/game_detail_screen.dart Folder/book tree browser + imports.
+- screens/reader_screen.dart     Two-headed PDF reader (see section 6).
 
-### Platform-Specific Rendering
-- **Windows**: Uses pdfx's built-in `PdfView` widget. Instant rendering, continuous scroll, no zoom support (pdfx's Windows backend deadlocks with custom zoom implementations).
-- **Android**: Uses a custom lazy `ListView` renderer with explicit `page.render(width:, height:)` calls. Supports pinch-zoom, percentage scaling (50%-300%), and crisp re-rasterization at any zoom level.
+## 5. Database schema — CURRENT VERSION: 4
+- games(id, name UNIQUE)
+- folders(id, game_id FK cascade, parent_folder_id, name)
+- books(id, game_id FK cascade, title, file_path,
+        source_type DEFAULT 'pdf', last_page DEFAULT 1,
+        folder_id NULL means game root)
+- Migration chain lives in onUpgrade: v1->v2 source_type,
+  v2->v3 last_page, v3->v4 folders + folder_id. Every future schema
+  change MUST bump the version and extend onUpgrade. Never recreate
+  tables; never drop user data.
+- PRAGMA foreign_keys = ON is set in onConfigure.
+- Book rows point at copied files inside app support, never originals.
 
-The app branches at runtime in `reader_screen.dart` based on `Platform.isWindows` vs `Platform.isAndroid`.
+## 6. Platform branching (reader)
+- Windows: pdfx PdfView ONLY. PdfViewPinch AND concurrent page.render
+  calls DEADLOCK the Windows PDFium backend (0% CPU hang). Never
+  reintroduce either on desktop. No zoom on Windows by design.
+- Android: custom lazy renderer (_PageImage in reader_screen.dart):
+  ListView of pages, strictly serialized static render queue,
+  per-document raster cache, 20s render timeout, zoom by re-rastering
+  at width * factor, pinch via InteractiveViewer (Android-only).
+- Zoom percentages are integers, clamped 50..300.
 
-### Key Services
-- `DatabaseService`: Singleton managing SQLite (sqflite). Current version: 4. Migrations stack in `_upgradeDB`.
-- `FileService`: Handles PDF import (copies to app's private storage) and deletion.
-- `reader_screen.dart`: Two-headed renderer with shared navigation (slider, jump dialog, position memory).
+## 7. Environment quirks (human's Windows machine)
+- App support dir: %APPDATA%\com.example\<product>\ (the Windows runner
+  CompanyName is com.example; books/ subdir holds imported PDFs).
+  Do not "fix" this; the human accepts it.
+- Android SDK at D:\coding\AndroidSDK; adb at
+  D:\coding\AndroidSDK\platform-tools\adb.exe (not on PATH by default).
+- sdkmanager.bat crashes (NTSTATUS 0xC0000409) under modern Java.
+  NEVER invoke it. Install SDK components via Android Studio UI only.
+- NDK pinned: ndkVersion = "30.0.16248370" in
+  android/app/build.gradle.kts.
+- Device: Samsung Fold5 (SM-F946B) via wireless ADB.
+- Builds run from the VS Code terminal via flutter run.
 
-## Known Issues & Solutions
-
-### Android Build
-- **Kotlin incremental compilation bug**: Cross-drive paths (C: pub cache, D: project) cause `IllegalArgumentException`. Fixed by adding `kotlin.incremental=false` to `android/gradle.properties`.
-- **NDK version mismatch**: Flutter template expects NDK 28.x, but we installed 30.0.16248370. Fixed by explicitly setting `ndkVersion = "30.0.16248370"` in `android/app/build.gradle.kts`.
-- **sdkmanager crash**: Old cmdline-tools crash under Java 21+. Workaround: install NDK via Android Studio GUI instead of CLI.
-
-### Windows Rendering
-- **PdfViewPinch deadlock**: Freezes with 0% CPU on Windows. Replaced with plain `PdfView`.
-- **PdfView ignores zoom**: Container width changes don't affect page raster size. Attempted MediaQuery override failed. Solution: abandoned zoom on Windows, use custom renderer on Android only.
-- **Custom renderer concurrency**: Multiple simultaneous `page.render()` calls deadlock PDFium. Solution: serialized render queue with `Future.then<void>((_) async {...})`.
-
-## Coding Conventions
-
-### File Structure
-- Models: `lib/models/game_model.dart` (Game, Folder, Book classes)
-- Services: `lib/services/database_service.dart`, `lib/services/file_service.dart`
-- Screens: `lib/screens/home_screen.dart`, `lib/screens/game_detail_screen.dart`, `lib/screens/reader_screen.dart`
-
-### Imports
-- Always pre-empt required imports. Every file must explicitly import what it uses.
-- Flutter APIs are not global: `debugPrint` requires `import 'package:flutter/foundation.dart';`, gesture events require `import 'package:flutter/gestures.dart';`.
-- Use relative imports within `lib/`: `import '../models/game_model.dart';`
-
-### Database Migrations
-- Increment version number in `_initDB`.
-- Add new `CREATE TABLE` or `ALTER TABLE` statements in `_upgradeDB` with `if (oldVersion < N)` guards.
-- Update `_createDB` to include new columns/tables for fresh installs.
-- Existing data migrates automatically; null columns mean "not set yet".
-
-### UI Patterns
-- Use `LayoutBuilder` when you need to know parent constraints (e.g., positioning overlays).
-- Use `Stack` + `Positioned` for overlays (slider, bubbles) on top of scrollable content.
-- Use `NotificationListener<ScrollNotification>` to track scroll position without controlling the scroll view.
-- For recursive tree navigation, push the same screen with different parameters (e.g., `GameDetailScreen` with `folderId`).
-
-## Planned Features (Do Not Build Yet)
-
-### FTS5 Full-Text Search
-- Add SQLite FTS5 virtual table for extracted book content.
-- Implement text extraction service (PDF text layer parsing).
-- Search UI with scoped ranking (global / game / folder / current-book priority).
-- Native snippet() excerpts in results.
-
-### Chapter Navigation
-- Read PDF embedded outlines via pdfx's document API.
-- Jump-to-chapter UI with fallback regex detection for PDFs without outlines.
-
-### Text-Based Sources
-- Add `sourceType = 'text'` for errata pasted from web compendiums (e.g., Kings of War).
-- Render as formatted text instead of PDF pages.
-
-## User Preferences
-
-### Code Delivery
-- Provide **complete file replacements** over surgical diffs when multiple edits accumulate.
-- Pre-empt all required imports and dependencies (`flutter pub add` commands).
-- Include test checklists for verification.
-
-### Debugging
-- When stuck on platform-specific bugs, recommend pivoting to the other platform if it's battle-tested there.
-- Use `debugPrint` for development logging (appears in Debug Console).
-- Check Task Manager CPU usage to distinguish deadlocks (0%) from infinite loops (100%).
-
-## File Locations
-- Windows app data: `C:\Users\<user>\AppData\Roaming\com.example\` (includes `rules_repository.db` and `books/` folder).
-- Android app data: Standard scoped storage paths.
-- Build artifacts: `build/` folder (gitignored).
-
-## Git Workflow
-- Commit frequently with descriptive messages.
-- Push to GitHub when ready to sync or hand off to another AI agent.
-- Use branches for experimental features (e.g., `feature/fts5-search`).
+## 8. Feature state
+Done: game CRUD; folder tree of arbitrary depth; picker-first import
+with filename-default naming and book rename; reader with continuous
+scroll, page slider with scrub bubble, numeric jump, position memory;
+Android zoom + pinch; Windows instant PdfView.
+Planned (design for these, do not build yet):
+- FTS5 full-text search over extracted page text with scoped ranking
+  (current book > game > global) and snippet() excerpts.
+- Chapter navigation via the pdfx document outline, regex fallback
+  for outline-less
