@@ -1,0 +1,49 @@
+# Project Rules & Architecture: Rules Repository
+
+## 1. Project Identity & Core Constraints
+- **Goal:** Build a personal, 100% offline Android app for storing and searching PDF rulebooks for tabletop games (e.g., BattleTech, Trench Crusade).
+- **Target Hardware:** Samsung Galaxy Z Fold5. The UI MUST be highly responsive, adapting seamlessly between the narrow folded phone screen and the wide unfolded tablet screen.
+- **No Cloud:** Absolutely no internet permissions. All storage, text extraction, and search must happen locally on the device.
+
+## 2. UI/UX Architecture (The "Fold5 Paradigm")
+- **No 50/50 Splits:** Never split the screen vertically (left/right) for the PDF viewer and menus. The PDF is the primary focus.
+- **The Bottom Sheet:** Use a `DraggableScrollableSheet` for all secondary UI (Search, Bookmarks, TOC). 
+  - `minChildSize`: 0.05 (Collapsed state: just a drag handle and page number).
+  - `maxChildSize`: 0.40 (Expanded state: takes up max 40% of the screen, leaving 60% for the PDF).
+- **Responsive Layouts:** Use `LayoutBuilder` or `MediaQuery` to adjust padding, font sizes, and constraints based on screen width. When unfolded, constrain the PDF viewer to a readable width so text doesn't stretch awkwardly across an 8-inch screen.
+
+## 3. Database & Search Logic
+- **Engine:** SQLite using the `sqflite` package, specifically leveraging the FTS5 (Full-Text Search 5) extension.
+- **Scoped Search Hierarchy:** Search results must be context-aware based on where the user initiates the search:
+  1. *Global Search:* Returns results from all games.
+  2. *Game Scoped (e.g., BattleTech):* Filters by `game_id`.
+  3. *Book Scoped (e.g., Total Warfare):* Filters by `game_id`, but uses a custom SQL `CASE` statement in the `ORDER BY` clause to prioritize the current `book_id` at the top (Priority 0), followed by other books in the same game (Priority 1).
+- **Snippets:** Do not parse text snippets in Dart. Use SQLite FTS5's native `snippet()` function in the SQL query to extract clean, 2-line context snippets around the matched term.
+
+## 4. PDF Handling
+- **Rendering:** Use a robust, open-source package like `pdfx` or `flutter_pdfview`. Do not use paid/freemium packages.
+- **Text Extraction:** Must run entirely on background threads (Isolates in Dart) to prevent UI freezing. 
+- **Bookmarks:** First check for embedded PDF Outlines. If missing, fallback to regex parsing for "Chapter X" patterns on the first 20 pages. Always allow manual bookmark creation.
+
+## 5. Vibe Coding & Mentorship Rules (CRITICAL)
+- **The User is a Beginner:** The user has no coding background. 
+- **Explain the "Why":** Before writing complex logic, briefly explain in plain English *why* we are doing it this way. 
+- **Async/Await:** Always use asynchronous operations for file I/O, database queries, and PDF parsing. Never block the Main UI thread.
+- **State Management:** Clearly separate UI state from data state. Use standard Flutter state management (like `Provider` or `Riverpod`) and explain how the data flows.
+- **No Hallucinated Packages:** Only use packages that are actively maintained, fully open-source, and compatible with the latest stable Flutter version. 
+
+## 6. Execution Protocol
+- When given a task, break it down into small, testable steps.
+- Always ask for approval before modifying multiple files at once.
+- If an error occurs, explain the error log in plain English before providing the fix.
+## 7. AGENT BEHAVIOR & TOOL USAGE (CRITICAL)
+- You are an autonomous coding agent, not a chatbot. 
+- NEVER just explain how to do something. NEVER output instructions for the user to follow manually.
+- You MUST use your `write_to_file`, `read_file`, and `execute_command` tools to make all changes. 
+- If you need to create a folder or file, use the `write_to_file` tool immediately. 
+- If you need to run a terminal command, use the `execute_command` tool immediately.
+- If you find yourself writing a list of steps for the user, STOP and use your tools instead.
+## 8. Planned Features (Design For These, Do Not Build Yet)
+- Full-text search over extracted book content using SQLite FTS5 with scoped ranking (global / game / current-book priority) and native snippet() excerpts.
+- Chapter navigation using the PDF's embedded table of contents (pdfx document outlines) with jump-to-chapter; fallback to regex chapter detection for PDFs without outlines.
+- Text-based rule sources (sourceType 'text') for errata pasted from online compendiums such as Kings of War.
