@@ -75,10 +75,17 @@ user-imported files or (planned) pasted text.
   is the build JDK); Gradle home GRADLE_USER_HOME=
   D:\Coding\DevCache\gradle; PUB_CACHE=D:\Coding\DevCache\flutterPubCache.
   Never suggest paths under %USERPROFILE% or C:\ for downloads/caches.
-- System Java is JDK 25, which Gradle 8.13 rejects. Pin the build JDK
-  via org.gradle.java.home in android/gradle.properties (D:\Coding\
-  Android studio\jbr) AND flutter config --jdk-dir. Do not upgrade
-  Gradle past 8.x to satisfy Java 25 — AGP 9 breaks pdfx 2.11.0.
+- System Java is JDK 25; Gradle 9.1.0 supports it but Flutter's tooling
+  must run on Java <=24. Pin the build JDK via org.gradle.java.home in
+  android/gradle.properties (D:\Coding\Android studio\jbr, Java 21)
+  AND flutter config --jdk-dir to that JBR.
+- pdfx REMOVED: its native PDFium Android plugin cannot compile under
+  AGP 9 (required by Flutter >=3.44). Reader now uses pure-Dart backends
+  pdf + printing (PdfRaster), see lib/services/pdf_backend*.dart.
+  Do NOT reintroduce pdfx or downgrade AGP below 9 — Flutter stable's
+  migrator re-adds android.newDsl/builtInKotlin flags and Kotlin>=2.2.20
+  validation will break any 8.x chain again.
+- Build chain pinned: AGP 9.0.0, Gradle 9.1.0 wrapper, Kotlin 2.2.20.
 - Wireless ADB device id is NOT "SM-F946B"; use the full id shown by
   flutter devices (e.g. adb-RFCW70KTWDD-DpexMv._adb-tls-connect._tcp)
   or plain `flutter run` with the interactive picker.
@@ -95,9 +102,9 @@ user-imported files or (planned) pasted text.
 Done: game CRUD; folder tree of arbitrary depth; picker-first import
 with filename-default naming and book rename; reader with continuous
 scroll, page slider with scrub bubble, numeric jump, position memory;
-Android zoom + pinch; Windows instant PdfView.
+Android zoom + pinch; unified lazy-raster reader (pdf+printing).
 Planned (design for these, do not build yet):
 - FTS5 full-text search over extracted page text with scoped ranking
   (current book > game > global) and snippet() excerpts.
-- Chapter navigation via the pdfx document outline, regex fallback
+- Chapter navigation via the pdf package document outline, regex fallback
   for outline-less
