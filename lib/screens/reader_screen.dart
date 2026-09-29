@@ -298,11 +298,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // FIX (Fold5 gesture-nav overlap): the app is edge-to-edge on Android,
+    // so MediaQuery.padding.bottom carries the system navigation-bar inset.
+    // Without this, the page slider overlay sits under the nav buttons.
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
     return Scaffold(
       appBar: _buildAppBar(),
       body: _doc == null
           ? const Center(child: CircularProgressIndicator())
-          : _buildReaderView(),
+          : Padding(
+              padding: EdgeInsets.only(bottom: bottomInset),
+              child: _buildReaderView(),
+            ),
     );
   }
 }
@@ -337,15 +344,23 @@ class _PageImageState extends State<_PageImage> {
   Future<PdfPageData>? _future;
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // FIX (Fold5 red screen): _load() reads MediaQuery.devicePixelRatioOf,
+    // which registers an inherited-widget dependency. Calling it from
+    // initState() threw "dependOnInheritedWidgetOfExactType<MediaQuery>()
+    // ... was called before _PageImageState.initState() completed".
+    // didChangeDependencies runs after initState with a fully valid context.
     _load();
   }
 
   @override
   void didUpdateWidget(covariant _PageImage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.logicalWidth != widget.logicalWidth) _load();
+    if (oldWidget.logicalWidth != widget.logicalWidth ||
+        oldWidget.pageNumber != widget.pageNumber) {
+      _load();
+    }
   }
 
   void _load() {

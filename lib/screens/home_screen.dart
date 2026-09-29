@@ -128,26 +128,31 @@ class _HomeScreenState extends State<HomeScreen> {
                         },
                       ),
           ),
-          // Input bar pinned to the bottom of the screen
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _nameController,
-                    decoration: const InputDecoration(
-                      hintText: 'Game name (e.g., BattleTech)',
-                      border: OutlineInputBorder(),
+          // Input bar pinned to the bottom of the screen.
+          // FIX (Fold5 gesture-nav overlap): SafeArea keeps it clear of the
+          // Android navigation bar in edge-to-edge mode.
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _nameController,
+                      decoration: const InputDecoration(
+                        hintText: 'Game name (e.g., BattleTech)',
+                        border: OutlineInputBorder(),
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                IconButton.filled(
-                  onPressed: _addGame,
-                  icon: const Icon(Icons.add),
-                ),
-              ],
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    onPressed: _addGame,
+                    icon: const Icon(Icons.add),
+                  ),
+                ],
+              ),
             ),
           ),
         ],

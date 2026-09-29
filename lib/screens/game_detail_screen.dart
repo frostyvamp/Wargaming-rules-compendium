@@ -268,20 +268,25 @@ class _GameDetailScreenState extends State<GameDetailScreen> {
                         ],
                       ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: FilledButton.icon(
-              onPressed: _isImporting ? null : _importPdf,
-              icon: _isImporting
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.upload_file),
-              label: const Text('Import PDF'),
-              style: FilledButton.styleFrom(
-                minimumSize: const Size.fromHeight(48),
+          // FIX (Fold5 gesture-nav overlap): SafeArea keeps the import
+          // button clear of the Android navigation bar in edge-to-edge mode.
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: FilledButton.icon(
+                onPressed: _isImporting ? null : _importPdf,
+                icon: _isImporting
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.upload_file),
+                label: const Text('Import PDF'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                ),
               ),
             ),
           ),
