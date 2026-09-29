@@ -1,18 +1,17 @@
 import 'dart:async';
-import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
-import 'package:pdfx/pdfx.dart';
 import '../models/game_model.dart';
 import '../services/database_service.dart';
+import '../services/pdf_backend.dart';
+import '../services/pdf_backend_dart.dart';
 
-/// Renders a Book's PDF with a backend per platform:
-///  - Windows: pdfx PdfView (instant, reliable, no zoom) so desktop
-///    stays a fast playground for search and database features.
-///  - Android: custom lazy page renderer with crisp zoom and pinch.
+// pdfx was replaced by a pure-Dart backend (pdf + printing): pdfx's
+// native PDFium Android plugin is incompatible with the AGP 9 build
+// chain required by current Flutter stable. The lazy per-page raster
+// approach is kept so zoom stays crisp on the Fold5's screens.
 class ReaderScreen extends StatefulWidget {
   final Book book;
   const ReaderScreen({super.key, required this.book});
@@ -28,8 +27,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   final ScrollController _hScrollController = ScrollController();
   final ScrollController _vScrollController = ScrollController();
 
-  PdfDocument? _doc;
-  PdfController? _pdfController; // Windows backend only.
+  PdfBackend? _doc;
   int _currentPage = 1;
   int _totalPages = 1;
   double _sliderValue = 1;
@@ -60,7 +58,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     _transformController.dispose();
     _hScrollController.dispose();
     _vScrollController.dispose();
-    _pdfController?.dispose();
+    _doc?.dispose();
     super.dispose();
   }
 
@@ -77,7 +75,8 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Future<void> _bootstrap() async {
     final fresh = await _db.getBook(widget.book.id!);
     final startPage = fresh?.lastPage ?? widget.book.lastPage;
-    final doc = await PdfDocument.openFile(widget.book.filePath);
+    final doc = PdfBackendDart();
+    await doc.open(widget.book.filePath);
 
     if (!mounted) return;
     setState(() {
@@ -85,14 +84,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       _totalPages = doc.pagesCount;
       _currentPage = startPage.clamp(1, doc.pagesCount);
       _sliderValue = _currentPage.toDouble();
-      if (Platform.isWindows) {
-        _pdfController = PdfController(
-          document: Future.value(doc),
-          initialPage: _currentPage,
-        );
-      }
     });
-    if (!Platform.isAndroid) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollToPage(_currentPage, animate: false);
     });
@@ -106,11 +98,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
 
   void _goToPage(int page) {
     final target = page.clamp(1, _totalPages);
-    if (Platform.isWindows) {
-      _pdfController?.jumpToPage(target);
-    } else {
-      _scrollToPage(target, animate: true);
-    }
+    _scrollToPage(target, animate: true);
     setState(() {
       _currentPage = target;
       _sliderValue = target.toDouble();
@@ -143,210 +131,99 @@ class _ReaderScreenState extends State<ReaderScreen> {
     }
   }
 
-  // ---------- Zoom (Android backend) ----------
+  // ---------- Zoom ----------
 
   void _setZoomPercent(int percent) {
     final target = percent.clamp(_minPercent, _maxPercent);
     if (target == _zoomPercent) return;
-    final oldHeight = _pageHeight;
-    final oldOffset =
-        _vScrollController.hasClients ? _vScrollController.offset : 0.0;
-    final oldHContent = _viewportWidth * _factor;
-    final oldHCenter = _hScrollController.hasClients
-        ? _hScrollController.offset + _viewportWidth / 2
-        : _viewportWidth / 2;
     setState(() => _zoomPercent = target);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_vScrollController.hasClients) {
-        final oldCenter = oldOffset + _viewportHeight / 2;
-        final fraction = oldHeight <= 0 ? 0.0 : oldCenter / oldHeight;
-        final maxOffset = _vScrollController.position.maxScrollExtent;
-        _vScrollController.jumpTo(
-            (fraction * _pageHeight - _viewportHeight / 2)
-                .clamp(0.0, maxOffset));
-      }
-      if (_hScrollController.hasClients && _viewportWidth > 0) {
-        final hFraction = oldHContent <= 0
-            ? 0.0
-            : (oldHCenter / oldHContent).clamp(0.0, 1.0);
-        final hMax = math.max(0.0, _pageWidth - _viewportWidth);
-        _hScrollController.jumpTo(
-            (hFraction * _pageWidth - _viewportWidth / 2).clamp(0.0, hMax));
-      }
+      _scrollToPage(_currentPage, animate: false);
     });
   }
 
   void _onPointerSignal(PointerSignalEvent event) {
-    if (event is PointerScrollEvent &&
-        HardwareKeyboard.instance.isControlPressed) {
-      final step = event.scrollDelta.dy < 0 ? 10 : -10;
-      _setZoomPercent(_zoomPercent + step);
+    if (event is PointerScrollEvent && _ctrlHeld) {
+      final delta = event.scrollDelta.dy > 0 ? -10 : 10;
+      _setZoomPercent(_zoomPercent + delta);
     }
-  }
-
-  Future<void> _showJumpDialog() async {
-    final controller = TextEditingController(text: '$_currentPage');
-    final input = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Jump to page'),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          autofocus: true,
-          decoration: InputDecoration(hintText: '1 - $_totalPages'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, controller.text),
-            child: const Text('Jump'),
-          ),
-        ],
-      ),
-    );
-    final parsed = int.tryParse(input?.trim() ?? '');
-    if (parsed != null) _goToPage(parsed);
   }
 
   // ---------- UI ----------
 
-  AppBar _buildAppBar({required bool showZoom}) {
-    return AppBar(
-      title: Text(widget.book.title),
-      actions: [
-        IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed:
-              _currentPage > 1 ? () => _goToPage(_currentPage - 1) : null,
-        ),
-        Center(
-          child: Text(
-            '$_currentPage / $_totalPages',
-            style: const TextStyle(fontSize: 16),
-          ),
-        ),
-        IconButton(
-          icon: const Icon(Icons.arrow_forward),
-          onPressed: _currentPage < _totalPages
-              ? () => _goToPage(_currentPage + 1)
-              : null,
-        ),
-        if (showZoom)
-          PopupMenuButton<int>(
-            tooltip: 'Zoom',
-            onSelected: _setZoomPercent,
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 50, child: Text('50%')),
-              PopupMenuItem(value: 100, child: Text('100%')),
-              PopupMenuItem(value: 125, child: Text('125%')),
-              PopupMenuItem(value: 150, child: Text('150%')),
-              PopupMenuItem(value: 200, child: Text('200%')),
-            ],
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.zoom_in),
-                  Text('$_zoomPercent%'),
-                ],
+  List<Widget> _buildOverlays(double maxHeight) {
+    return [
+      Positioned(
+        left: 0,
+        right: 0,
+        bottom: 0,
+        child: Container(
+          color: Colors.black.withOpacity(0.35),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.chevron_left, color: Colors.white),
+                onPressed: () => _goToPage(_currentPage - 1),
               ),
-            ),
+              Expanded(
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 2,
+                    overlayShape:
+                        const RoundSliderOverlayShape(overlayRadius: 14),
+                  ),
+                  child: Slider(
+                    value: _sliderValue.clamp(1, _totalPages.toDouble()),
+                    min: 1,
+                    max: _totalPages.toDouble(),
+                    divisions: _totalPages > 1 ? _totalPages - 1 : null,
+                    onChanged: _totalPages > 1
+                        ? (v) {
+                            setState(() => _draggingSlider = true);
+                            _goToPage(v.round());
+                          }
+                        : null,
+                    onChangeEnd: (_) =>
+                        setState(() => _draggingSlider = false),
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.chevron_right, color: Colors.white),
+                onPressed: () => _goToPage(_currentPage + 1),
+              ),
+              Text('$_currentPage / $_totalPages',
+                  style: const TextStyle(color: Colors.white)),
+            ],
           ),
-        IconButton(
-          icon: const Icon(Icons.format_list_numbered),
-          tooltip: 'Jump to page',
-          onPressed: _showJumpDialog,
+        ),
+      ),
+    ];
+  }
+
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      title: Text(widget.book.title, overflow: TextOverflow.ellipsis),
+      actions: [
+        PopupMenuButton<int>(
+          icon: const Icon(Icons.zoom_out_map),
+          tooltip: 'Zoom',
+          onSelected: _setZoomPercent,
+          itemBuilder: (context) => const [
+            PopupMenuItem(value: 50, child: Text('50%')),
+            PopupMenuItem(value: 75, child: Text('75%')),
+            PopupMenuItem(value: 100, child: Text('100%')),
+            PopupMenuItem(value: 150, child: Text('150%')),
+            PopupMenuItem(value: 200, child: Text('200%')),
+            PopupMenuItem(value: 300, child: Text('300%')),
+          ],
         ),
       ],
     );
   }
 
-  List<Widget> _buildOverlays(double trackHeight) {
-    final span = (_totalPages - 1).toDouble().clamp(1.0, double.infinity);
-    final fraction = ((_sliderValue - 1) / span).clamp(0.0, 1.0);
-    final maxTop = (trackHeight - _bubbleHeight).clamp(0.0, double.infinity);
-    final bubbleTop = (fraction * maxTop).clamp(0.0, maxTop);
-
-    return [
-      Positioned(
-        right: 0,
-        top: 0,
-        bottom: 0,
-        child: SizedBox(
-          width: 40,
-          child: RotatedBox(
-            quarterTurns: 1,
-            child: Slider(
-              value: _sliderValue.clamp(1.0, _totalPages.toDouble()),
-              min: 1,
-              max: _totalPages.toDouble(),
-              onChanged: (v) {
-                setState(() {
-                  _draggingSlider = true;
-                  _sliderValue = v;
-                });
-              },
-              onChangeEnd: (v) {
-                setState(() => _draggingSlider = false);
-                _goToPage(v.round());
-              },
-            ),
-          ),
-        ),
-      ),
-      if (_draggingSlider)
-        Positioned(
-          right: 48,
-          top: bubbleTop,
-          child: Container(
-            height: _bubbleHeight,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            decoration: BoxDecoration(
-              color: Colors.black87,
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: Colors.white24),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              '${_sliderValue.round()} / $_totalPages',
-              style: const TextStyle(color: Colors.white, fontSize: 13),
-            ),
-          ),
-        ),
-    ];
-  }
-
-  Widget _buildWindowsView() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return Stack(
-          children: [
-            Positioned.fill(
-              child: PdfView(
-                controller: _pdfController!,
-                scrollDirection: Axis.vertical,
-                pageSnapping: false,
-                onPageChanged: (page) {
-                  setState(() {
-                    _currentPage = page;
-                    if (!_draggingSlider) _sliderValue = page.toDouble();
-                  });
-                },
-              ),
-            ),
-            ..._buildOverlays(constraints.maxHeight),
-          ],
-        );
-      },
-    );
-  }
-
-  Widget _buildAndroidView() {
+  Widget _buildReaderView() {
     return LayoutBuilder(
       builder: (context, constraints) {
         _viewportWidth = constraints.maxWidth;
@@ -422,20 +299,18 @@ class _ReaderScreenState extends State<ReaderScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: _buildAppBar(showZoom: !Platform.isWindows),
+      appBar: _buildAppBar(),
       body: _doc == null
           ? const Center(child: CircularProgressIndicator())
-          : Platform.isWindows
-              ? _buildWindowsView()
-              : _buildAndroidView(),
+          : _buildReaderView(),
     );
   }
 }
 
-/// One lazily rendered PDF page for the Android backend. Requests its
-/// raster at an explicit pixel width so zoom is always crisp.
+/// One lazily rendered PDF page. Requests its raster at an explicit
+/// pixel width so zoom is always crisp.
 class _PageImage extends StatefulWidget {
-  final PdfDocument document;
+  final PdfBackend document;
   final String ownerKey;
   final int pageNumber;
   final double logicalWidth;
@@ -454,12 +329,12 @@ class _PageImage extends StatefulWidget {
 }
 
 class _PageImageState extends State<_PageImage> {
-  // Renders must be strictly one-at-a-time: pdfx's PDFium backend
-  // deadlocks when several page renders run concurrently.
+  // Renders must be strictly one-at-a-time to keep memory bounded and
+  // avoid saturating the raster isolate.
   static Future<void> _renderQueue = Future.value();
-  static final Map<String, Future<PdfPageImage>> _cache = {};
+  static final Map<String, Future<PdfPageData>> _cache = {};
 
-  Future<PdfPageImage>? _future;
+  Future<PdfPageData>? _future;
 
   @override
   void initState() {
@@ -474,38 +349,17 @@ class _PageImageState extends State<_PageImage> {
   }
 
   void _load() {
-    final dpr = MediaQuery.of(context).devicePixelRatio;
-    final px = (widget.logicalWidth * dpr).round();
-    final key = '${widget.ownerKey}:${widget.pageNumber}@$px';
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final px = (widget.logicalWidth * dpr).round().toDouble();
+    final key = '${widget.ownerKey}:${widget.pageNumber}@${px.round()}';
     _future = _cache.putIfAbsent(key, () {
-      final completer = Completer<PdfPageImage>();
+      final completer = Completer<PdfPageData>();
       _renderQueue = _renderQueue.then<void>((_) async {
         try {
-          final page = await widget.document.getPage(widget.pageNumber);
-          try {
-            final dynamic rawWidth = page.width;
-            final dynamic rawHeight = page.height;
-            final double pageW =
-                rawWidth == null ? 1.0 : (rawWidth as num).toDouble();
-            final double pageH = rawHeight == null
-                ? pageW * 1.414
-                : (rawHeight as num).toDouble();
-            final double aspect = pageW > 0 ? pageH / pageW : 1.414;
-            final image = await page
-                .render(
-                  width: px.toDouble(),
-                  height: px.toDouble() * aspect,
-                  format: PdfPageImageFormat.jpeg,
-                )
-                .timeout(const Duration(seconds: 20));
-            if (image == null) {
-              throw StateError(
-                  'PDFium returned no image for page ${widget.pageNumber}');
-            }
-            completer.complete(image);
-          } finally {
-            await page.close();
-          }
+          final image = await widget.document
+              .renderPage(widget.pageNumber, px)
+              .timeout(const Duration(seconds: 30));
+          completer.complete(image);
         } catch (e) {
           _cache.remove(key);
           completer.completeError(e);
@@ -520,16 +374,13 @@ class _PageImageState extends State<_PageImage> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<PdfPageImage>(
+    return FutureBuilder<PdfPageData>(
       future: _future,
       builder: (context, snapshot) {
         if (snapshot.hasData) {
           final img = snapshot.data!;
-          final w = img.width ?? 0;
-          final h = img.height ?? 0;
-          final aspect = w > 0 ? h / w : 1.414;
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            widget.onAspectKnown(aspect);
+            widget.onAspectKnown(img.aspect);
           });
           return Image.memory(
             img.bytes,

@@ -49,3 +49,8 @@ app.*.map.json
 
 # Local machine config (absolute D: paths, never commit)
 android/local.properties
+
+# Gradle local caches (never commit)
+.gradle/
+android/.gradle/
+cbuild/
