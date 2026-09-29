@@ -81,11 +81,14 @@ user-imported files or (planned) pasted text.
   AND flutter config --jdk-dir to that JBR.
 - pdfx REMOVED: its native PDFium Android plugin cannot compile under
   AGP 9 (required by Flutter >=3.44). Reader now uses pure-Dart backends
-  pdf + printing (PdfRaster), see lib/services/pdf_backend*.dart.
+  pdf + printing, see lib/services/pdf_backend*.dart. Raster via the
+  Printing.raster stream; page info via package:pdf rendering
+  (PdfDocument.parseBytes). Do NOT use PdfRaster.fromPage or
+  Document.load — neither exists in these packages.
   Do NOT reintroduce pdfx or downgrade AGP below 9 — Flutter stable's
   migrator re-adds android.newDsl/builtInKotlin flags and Kotlin>=2.2.20
   validation will break any 8.x chain again.
-- Build chain pinned: AGP 9.0.0, Gradle 9.1.0 wrapper, Kotlin 2.2.20.
+- Build chain pinned: AGP 9.0.1, Gradle 9.1.0 wrapper, Kotlin 2.3.20.
 - Wireless ADB device id is NOT "SM-F946B"; use the full id shown by
   flutter devices (e.g. adb-RFCW70KTWDD-DpexMv._adb-tls-connect._tcp)
   or plain `flutter run` with the interactive picker.
