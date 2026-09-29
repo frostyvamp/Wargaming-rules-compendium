@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
@@ -7,16 +8,18 @@ import 'pdf_backend.dart';
 
 /// Pure-Dart [PdfBackend] used on all platforms.
 ///
-/// Uses the `pdf` package to load the document and `printing`'s
-/// PdfRaster (Skia-based, bundled with the printing plugin) to rasterise
-/// pages — no PDFium native library, hence no Gradle/AGP involvement.
+/// Uses the `pdf` package to read document metadata (page count, page
+/// sizes) and the `printing` plugin's rasteriser (platform PDFium/pdf.js)
+/// to render pages to PNG — no pdfx, so no AGP-incompatible Gradle plugin.
 class PdfBackendDart implements PdfBackend {
-  Document? _doc;
+  Uint8List? _bytes;
+  PdfDocument? _doc;
 
   @override
   Future<void> open(String filePath) async {
     final bytes = await File(filePath).readAsBytes();
-    _doc = await Document.load(bytes);
+    _bytes = bytes;
+    _doc = PdfDocument.parseBytes(bytes);
   }
 
   @override
@@ -25,23 +28,31 @@ class PdfBackendDart implements PdfBackend {
   @override
   Future<PdfPageData> renderPage(int pageNumber, double targetWidthPx) async {
     final doc = _doc;
-    if (doc == null) throw StateError('Document not opened');
-    final page = doc.getPage(pageNumber - 1);
-    final ptWidth = page.width.toDouble();
-    final ptHeight = page.height.toDouble();
-    final scale = (targetWidthPx / ptWidth).clamp(0.1, 8.0);
-    final w = (ptWidth * scale).round().clamp(1, 4096);
-    final h = (ptHeight * scale).round().clamp(1, 4096);
+    final bytes = _bytes;
+    if (doc == null || bytes == null) throw StateError('Document not opened');
 
-    final raster =
-        await PdfRaster.fromPage(doc, pageNumber - 1, width: w, height: h);
-    final png = await raster.toPngImageData();
+    // Page dimensions in points (1pt = 1/72 inch)
+    final page = doc.page(pageNumber - 1)!;
+    final ptWidth = page.pageFormat.width;
+    final ptHeight = page.pageFormat.height;
+
+    // Convert the desired pixel width into a DPI for the rasteriser.
+    final scale = (targetWidthPx / ptWidth).clamp(0.1, 8.0);
+    final dpi = (72.0 * scale).clamp(36.0, 576.0);
+
+    final raster = await Printing.raster(
+      bytes,
+      pages: [pageNumber - 1],
+      dpi: dpi,
+    ).first;
+
+    final png = await raster.toPng();
     return PdfPageData(png, raster.width, raster.height);
   }
 
   @override
   Future<void> dispose() async {
-    // The `pdf` Document holds only in-memory structures; nothing to free.
     _doc = null;
+    _bytes = null;
   }
 }
