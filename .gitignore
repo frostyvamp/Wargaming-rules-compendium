@@ -46,3 +46,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Local machine config (absolute D: paths, never commit)
+android/local.properties
