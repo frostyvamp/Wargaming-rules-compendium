@@ -20,14 +20,23 @@ Hierarchy: Game -> Folder (arbitrary depth, optional) -> Book (PDF).
 No network calls at runtime, ever. Online content enters only via
 user-imported files or (planned) pasted text.
 
-## 3. Stack and pins
+## 3. Stack and pins (CURRENT — verified against the build chain)
 - Flutter on a recent SDK (post-3.41: cacheExtent deprecated in favor
   of scrollCacheExtent).
 - sqflite + path + path_provider for storage and database.
-- file_picker: ^8.3.1 PINNED. Newer majors removed FilePicker.platform.
-- pdfx: 2.11.0. Use pagesCount (plural). render(width:, height:,
-  format:) takes doubles and returns Future<PdfPageImage?>; image
-  width/height are nullable.
+- file_picker: ^10.3.11. The old ^8.3.1 pin is RETIRED: 8.x hard-codes
+  compileSdk android-34, which fails AAR-metadata checks against API 36
+  plugins. 10.3.x keeps FilePicker.platform (verified) and compiles
+  against newer SDKs. Do NOT re-pin to 8.x.
+- pdfx: ^2.11.0 (Android PDFium native plugin). It requires the AGP 9
+  build chain below; it does NOT work with AGP 8.x. Use pagesCount
+  (plural). render(width:, height:, format:) takes doubles and returns
+  Future<PdfPageImage?>; image width/height are nullable.
+- Build chain (android/settings.gradle.kts + wrapper): AGP 9.0.1,
+  Kotlin 2.3.20, Gradle 9.1.0, flutter-plugin-loader 1.0.0. These are
+  the versions Flutter stable validates; never downgrade this chain to
+  "fix" a plugin problem — fix the plugin or add a compileSdk patcher
+  (see android/build.gradle.kts) instead.
 - dart:io Platform for platform branching.
 
 ## 4. File tree (lib/)
@@ -39,6 +48,11 @@ user-imported files or (planned) pasted text.
 - screens/home_screen.dart       Game list.
 - screens/game_detail_screen.dart Folder/book tree browser + imports.
 - screens/reader_screen.dart     Two-headed PDF reader (see section 6).
+- BANNED: lib/services/pdf_backend_dart.dart and any pure-Dart
+  pdf/printing raster shim. Those packages have no public page-raster
+  API; every attempt to write one produced compile errors. The only
+  sanctioned PDF path is pdfx (both platforms). If a file or pubspec
+  entry for pdf/printing/pdf_backend reappears, delete it.
 
 ## 5. Database schema — CURRENT VERSION: 4
 - games(id, name UNIQUE)
@@ -67,24 +81,18 @@ user-imported files or (planned) pasted text.
 - App support dir: %APPDATA%\com.example\<product>\ (the Windows runner
   CompanyName is com.example; books/ subdir holds imported PDFs).
   Do not "fix" this; the human accepts it.
-- Android SDK at D:\coding\AndroidSDK; adb at
-  D:\coding\AndroidSDK\platform-tools\adb.exe (not on PATH by default).
+- Android SDK at D:\Coding\Android SDK; adb at
+  D:\Coding\Android SDK\platform-tools\adb.exe (not on PATH by default).
 - C: drive is small — ALL caches/tooling live on D:. Flutter SDK
-  D:\coding\flutter; Android Studio D:\Coding\Android studio (its JBR
-  is the build JDK); Gradle home GRADLE_USER_HOME=
-  D:\Coding\DevCache\gradle; PUB_CACHE=D:\Coding\DevCache\flutterPubCache.
+  D:\coding\flutter; Android Studio D:\Coding\Android studio; Gradle
+  home GRADLE_USER_HOME=D:\Coding\DevCache\gradle;
+  PUB_CACHE=D:\Coding\DevCache\flutterPubCache.
   Never suggest paths under %USERPROFILE% or C:\ for downloads/caches.
-- System Java is JDK 25; Gradle 9.1.0 supports it but Flutter's tooling
-  must run on Java <=24. Pin the build JDK via org.gradle.java.home in
-  android/gradle.properties (D:\Coding\Android studio\jbr, Java 21)
-  AND flutter config --jdk-dir to that JBR.
-- pdfx REMOVED: its native PDFium Android plugin cannot compile under
-  AGP 9 (required by Flutter >=3.44). Reader now uses pure-Dart backends
-  pdf + printing (PdfRaster), see lib/services/pdf_backend*.dart.
-  Do NOT reintroduce pdfx or downgrade AGP below 9 — Flutter stable's
-  migrator re-adds android.newDsl/builtInKotlin flags and Kotlin>=2.2.20
-  validation will break any 8.x chain again.
-- Build chain pinned: AGP 9.0.0, Gradle 9.1.0 wrapper, Kotlin 2.2.20.
+- System Java is JDK 25. Gradle 9.1.0 (the current wrapper) runs on it;
+  do NOT downgrade Gradle to 8.x for any reason — Gradle 8.x rejects
+  JDK 25 and AGP 8 breaks pdfx. If a tool ever reports a Java/Gradle
+  mismatch, align the wrapper to what Flutter validates rather than
+  pinning org.gradle.java.home.
 - Wireless ADB device id is NOT "SM-F946B"; use the full id shown by
   flutter devices (e.g. adb-RFCW70KTWDD-DpexMv._adb-tls-connect._tcp)
   or plain `flutter run` with the interactive picker.
@@ -101,9 +109,20 @@ user-imported files or (planned) pasted text.
 Done: game CRUD; folder tree of arbitrary depth; picker-first import
 with filename-default naming and book rename; reader with continuous
 scroll, page slider with scrub bubble, numeric jump, position memory;
-Android zoom + pinch; unified lazy-raster reader (pdf+printing).
+Android zoom + pinch; Windows instant PdfView.
 Planned (design for these, do not build yet):
 - FTS5 full-text search over extracted page text with scoped ranking
   (current book > game > global) and snippet() excerpts.
-- Chapter navigation via the pdf package document outline, regex fallback
-  for outline-less
+- Chapter navigation via the pdfx document outline, regex fallback
+  for outline-less PDFs.
+
+## 9. Git workflow (agent ↔ human)
+- The agent commits to its workspace; the human presses "Publish" in
+  the UI, then on Windows: git pull origin main -> flutter clean ->
+  flutter pub get -> flutter run.
+- NEVER ask the human to paste tokens, private keys, or .pem contents
+  into chat — GitHub's secret scanner revokes them within minutes and
+  the churn broke the workflow repeatedly. No direct pushes from the
+  agent; publish button only.
+- If a PR view appears after publishing, merge it (or pull the branch
+  it names) before building.
