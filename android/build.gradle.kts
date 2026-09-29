@@ -7,13 +7,15 @@ allprojects {
 
 // Force plugin subprojects to compileSdk 36 (fixes checkDebugAarMetadata)
 val minCompileSdk = 36
-subprojects {
-    afterEvaluate {
-        val androidExt = extensions.findByName("android")
-            as? com.android.build.gradle.BaseExtension ?: return@afterEvaluate
-        val current = androidExt.compileSdkVersion?.replace("android-", "")?.toIntOrNull() ?: 0
-        if (current < minCompileSdk) { androidExt.compileSdkVersion(minCompileSdk) }
-    }
+plugins.withId("com.android.library") {
+    extensions.findByName("android")
+        ?.let { it as? com.android.build.gradle.LibraryExtension }
+        ?.let { ext ->
+            val current = ext.compileSdk?.toIntOrNull() ?: 0
+            if (current < minCompileSdk) {
+                ext.compileSdk = minCompileSdk
+            }
+        }
 }
 val newBuildDir: Directory =
     rootProject.layout.buildDirectory

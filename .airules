@@ -1,15 +1,23 @@
 # .airules — Binding specification for any agent working on this repo
 # Read this file IN FULL before any task. Re-read after any schema or
-# dependency change. If you are about to execute a shell command: STOP.
-# You have no shell, no Flutter SDK, no Android SDK, no device access.
+# dependency change.
 
 ## 1. Agent operating rules
+- Capabilities (verified 2026-09-29): the agent has a sandboxed Linux
+  shell with git and network READ access to this repo. It does NOT
+  have a Flutter SDK, Android SDK, or any device — it cannot build or
+  run the app; the human is the only verifier. GitHub tokens pasted
+  into chat or committed anywhere are auto-revoked by secret scanning
+  within minutes (observed twice). Github tokens should be found in Environment variables. 
+  Report if the github token is not working. 
+- Always `git pull`/fetch origin main before reading code; your local
+  copy may be stale. Report discrepancies between this file and the
+  tree instead of silently "fixing" either one.
 - Inspect the project file structure first, then read this file fully.
 - Never guess package API signatures. If uncertain, ask the human to
   paste the exact analyzer error or the IDE IntelliSense candidates.
 - Pre-emptively declare every import and pub dependency a change needs.
-- Prefer full-file replacements for heavily edited files; use surgical
-  diffs only with exact find/replace anchors.
+- Prefer full-file replacements for edited files.
 - The analyzer message is the specification. Adapt code to installed
   versions; never argue with them.
 - Request log tails, not summaries, when diagnosing failures.
@@ -20,41 +28,32 @@ Hierarchy: Game -> Folder (arbitrary depth, optional) -> Book (PDF).
 No network calls at runtime, ever. Online content enters only via
 user-imported files or (planned) pasted text.
 
-## 3. Stack and pins (CURRENT — verified against the build chain)
+## 3. Stack and pins (CURRENT — re-verified against pubspec.yaml +
+##    settings.gradle.kts at commit 7c8f716, 2026-09-29)
 - Flutter on a recent SDK (post-3.41: cacheExtent deprecated in favor
   of scrollCacheExtent).
-- sqflite + path + path_provider for storage and database.
-- file_picker: ^10.3.11. The old ^8.3.1 pin is RETIRED: 8.x hard-codes
-  compileSdk android-34, which fails AAR-metadata checks against API 36
-  plugins. 10.3.x keeps FilePicker.platform (verified) and compiles
-  against newer SDKs. Do NOT re-pin to 8.x.
-- pdfx: ^2.11.0 (Android PDFium native plugin). It requires the AGP 9
-  build chain below; it does NOT work with AGP 8.x. Use pagesCount
-  (plural). render(width:, height:, format:) takes doubles and returns
-  Future<PdfPageImage?>; image width/height are nullable.
+- sqflite ^2.3.0 + path ^1.8.3 + path_provider ^2.1.0 for storage and
+  database; sqflite_common_ffi ^2.3.0 for desktop FFI.
+- PDF stack (pure-Dart; pdfx REMOVED): pdf ^3.11.0 + printing ^5.13.0
+  via lib/services/pdf_backend.dart / pdf_backend_dart.dart. History
+  note: pdfx was tried first and reverted — its bundled Android PDFium
+  Gradle subproject does not build under AGP 9. Do NOT re-add pdfx.
+- file_picker: ^8.3.1. 8.x hard-codes compileSdk android-34, which
+  trips ":file_picker:checkDebugAarMetadata" because
+  flutter_plugin_android_lifecycle (transitive) requires API 36. This
+  is HANDLED by the compileSdk patcher in android/build.gradle.kts
+  (forces every com.android.library subproject to compileSdk >= 36),
+  so pinning 8.3.1 is safe. If you bump file_picker to 10.x anyway,
+  FilePicker.platform API is unchanged; keep the patcher regardless.
 - Build chain (android/settings.gradle.kts + wrapper): AGP 9.0.1,
-  Kotlin 2.3.20, Gradle 9.1.0, flutter-plugin-loader 1.0.0. These are
-  the versions Flutter stable validates; never downgrade this chain to
-  "fix" a plugin problem — fix the plugin or add a compileSdk patcher
-  (see android/build.gradle.kts) instead.
+  Kotlin 2.3.20, Gradle 9.1.0. These are the versions Flutter stable
+  validates; never downgrade this chain to "fix" a plugin problem —
+  fix the plugin or the compileSdk patcher instead. NOTE: AGP 9
+  removed BaseExtension.compileSdkVersion(int); the patcher must use
+  LibraryExtension.compileSdk (String property).
 - dart:io Platform for platform branching.
 
-## 4. File tree (lib/)
-- main.dart                      Entry, desktop sqflite FFI init,
-                                 MaterialApp (dark theme, no banner).
-- models/game_model.dart         Game, Folder, Book models.
-- services/database_service.dart Singleton, schema + migrations.
-- services/file_service.dart     Copies imports into private books/.
-- screens/home_screen.dart       Game list.
-- screens/game_detail_screen.dart Folder/book tree browser + imports.
-- screens/reader_screen.dart     Two-headed PDF reader (see section 6).
-- BANNED: lib/services/pdf_backend_dart.dart and any pure-Dart
-  pdf/printing raster shim. Those packages have no public page-raster
-  API; every attempt to write one produced compile errors. The only
-  sanctioned PDF path is pdfx (both platforms). If a file or pubspec
-  entry for pdf/printing/pdf_backend reappears, delete it.
-
-## 5. Database schema — CURRENT VERSION: 4
+## 4. Database schema — CURRENT VERSION: 4
 - games(id, name UNIQUE)
 - folders(id, game_id FK cascade, parent_folder_id, name)
 - books(id, game_id FK cascade, title, file_path,
@@ -67,17 +66,22 @@ user-imported files or (planned) pasted text.
 - PRAGMA foreign_keys = ON is set in onConfigure.
 - Book rows point at copied files inside app support, never originals.
 
-## 6. Platform branching (reader)
-- Windows: pdfx PdfView ONLY. PdfViewPinch AND concurrent page.render
-  calls DEADLOCK the Windows PDFium backend (0% CPU hang). Never
-  reintroduce either on desktop. No zoom on Windows by design.
-- Android: custom lazy renderer (_PageImage in reader_screen.dart):
-  ListView of pages, strictly serialized static render queue,
-  per-document raster cache, 20s render timeout, zoom by re-rastering
-  at width * factor, pinch via InteractiveViewer (Android-only).
+## 5. Reader (single pure-Dart path on both platforms)
+- Both Windows and Android use the custom lazy renderer (_PageImage in
+  reader_screen.dart): ListView of pages, strictly serialized static
+  render queue, per-document raster cache, 20s render timeout, zoom by
+  re-rastering at width * factor, pinch via InteractiveViewer.
+- pdfx PdfView is GONE; do not reintroduce it or PdfViewPinch (the old
+  Windows PDFium deadlock note only ever applied to pdfx).
+- _PageImageState MUST NOT touch MediaQuery (or any inherited widget)
+  inside initState(); load from didChangeDependencies(). Regression
+  seen on Fold5: "dependOnInheritedWidgetOfExactType<MediaQuery>() was
+  called before initState() completed" red screen.
+- Bottom bars need SafeArea(bottom): the Fold5 navigation bar covered
+  import/create buttons until fixed in 7c8f716.
 - Zoom percentages are integers, clamped 50..300.
 
-## 7. Environment quirks (human's Windows machine)
+## 6. Environment quirks (human's Windows machine)
 - App support dir: %APPDATA%\com.example\<product>\ (the Windows runner
   CompanyName is com.example; books/ subdir holds imported PDFs).
   Do not "fix" this; the human accepts it.
@@ -90,9 +94,9 @@ user-imported files or (planned) pasted text.
   Never suggest paths under %USERPROFILE% or C:\ for downloads/caches.
 - System Java is JDK 25. Gradle 9.1.0 (the current wrapper) runs on it;
   do NOT downgrade Gradle to 8.x for any reason — Gradle 8.x rejects
-  JDK 25 and AGP 8 breaks pdfx. If a tool ever reports a Java/Gradle
-  mismatch, align the wrapper to what Flutter validates rather than
-  pinning org.gradle.java.home.
+  JDK 25. If a tool ever reports a Java/Gradle mismatch, align the
+  wrapper to what Flutter validates rather than pinning
+  org.gradle.java.home.
 - Wireless ADB device id is NOT "SM-F946B"; use the full id shown by
   flutter devices (e.g. adb-RFCW70KTWDD-DpexMv._adb-tls-connect._tcp)
   or plain `flutter run` with the interactive picker.
@@ -105,24 +109,18 @@ user-imported files or (planned) pasted text.
 - Device: Samsung Fold5 (SM-F946B) via wireless ADB.
 - Builds run from the VS Code terminal via flutter run.
 
-## 8. Feature state
+## 7. Feature state
 Done: game CRUD; folder tree of arbitrary depth; picker-first import
 with filename-default naming and book rename; reader with continuous
 scroll, page slider with scrub bubble, numeric jump, position memory;
-Android zoom + pinch; Windows instant PdfView.
+Android zoom + pinch; pure-Dart pdf+printing backend on both platforms
+(pdfx removed); Fold5 nav-bar SafeArea + MediaQuery initState crash fix.
 Planned (design for these, do not build yet):
 - FTS5 full-text search over extracted page text with scoped ranking
-  (current book > game > global) and snippet() excerpts.
-- Chapter navigation via the pdfx document outline, regex fallback
-  for outline-less PDFs.
-
-## 9. Git workflow (agent ↔ human)
-- The agent commits to its workspace; the human presses "Publish" in
-  the UI, then on Windows: git pull origin main -> flutter clean ->
-  flutter pub get -> flutter run.
-- NEVER ask the human to paste tokens, private keys, or .pem contents
-  into chat — GitHub's secret scanner revokes them within minutes and
-  the churn broke the workflow repeatedly. No direct pushes from the
-  agent; publish button only.
-- If a PR view appears after publishing, merge it (or pull the branch
-  it names) before building.
+  (current book > game > global) and snippet() excerpts. UI slot:
+  widgets/search_result_card.dart (empty placeholder). Note: the
+  `pdf` package can extract embedded text per page (PdfDocument.pages
+  .text), but scanned/image-only PDFs will yield nothing — design a
+  graceful "no text layer" state.
+- Chapter navigation via the document outline (package:pdf exposes
+  outline/catalog), regex fallback for outline-less PDFs.
